@@ -295,9 +295,28 @@
     }, 1000);
   }
   
-  // Auto-refresh every 10 seconds
-  loadLink();
-  setInterval(loadLink, 10000);
+  // Check for query params first (instant, no deploy needed)
+  function checkQueryParams() {
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get('url');
+    const ref = params.get('ref');
+    
+    if (url && ref) {
+      // Validate it's a bankid URL
+      if (url.startsWith('bankid://')) {
+        const createdAt = new Date().toISOString();
+        showActive(url, 25); // 25 seconds default
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  // Auto-refresh every 10 seconds (fallback)
+  if (!checkQueryParams()) {
+    loadLink();
+    setInterval(loadLink, 10000);
+  }
 </script>
 </body>
 </html>

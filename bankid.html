@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MC Slot Monitor — BankID</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    text-align: center;
+  }
+  .container { max-width: 480px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  .subtitle { color: #94a3b8; margin-bottom: 2rem; }
+  
+  .card {
+    background: #1e293b;
+    border-radius: 16px;
+    padding: 2rem;
+    border: 1px solid #334155;
+    margin-bottom: 1rem;
+  }
+  
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 50px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+  }
+  .status-badge.waiting { background: #f59e0b20; color: #f59e0b; }
+  .status-badge.ready { background: #22c55e20; color: #22c55e; }
+  .status-badge.expired { background: #ef444420; color: #ef4444; }
+  
+  .bankid-btn {
+    display: block;
+    width: 100%;
+    padding: 1rem 1.5rem;
+    background: #22c55e;
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-size: 1.125rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    margin-bottom: 1rem;
+    transition: all 0.2s;
+  }
+  .bankid-btn:hover { background: #16a34a; transform: translateY(-1px); }
+  .bankid-btn:disabled {
+    background: #475569;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  .timer {
+    font-size: 2rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #f59e0b;
+    margin: 1rem 0;
+  }
+  .timer.expired { color: #ef4444; }
+  
+  .info {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    line-height: 1.6;
+  }
+  
+  .instructions {
+    text-align: left;
+    background: #0f172a;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-top: 1rem;
+  }
+  .instructions ol {
+    margin-left: 1.25rem;
+    color: #cbd5e1;
+    font-size: 0.875rem;
+  }
+  .instructions li { margin-bottom: 0.5rem; }
+  
+  .refresh-btn {
+    background: transparent;
+    border: 1px solid #475569;
+    color: #94a3b8;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    margin-top: 1rem;
+  }
+  .refresh-btn:hover { border-color: #64748b; color: #e2e8f0; }
+  
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛵 MC Slot Monitor</h1>
+  <p class="subtitle">BankID-inloggning för Trafikverket</p>
+  
+  <div class="card">
+    <div class="status-badge waiting" id="status-badge">
+      <span>⏳</span>
+      <span id="status-text">Väntar på länk...</span>
+    </div>
+    
+    <div id="timer-display" class="timer hidden">--:--</div>
+    
+    <a href="#" class="bankid-btn hidden" id="bankid-link" target="_blank" rel="noopener">
+      🔐 Öppna BankID
+    </a>
+    
+    <button class="bankid-btn hidden" id="request-btn" onclick="requestLink()">
+      🔔 Begär ny inloggningslänk
+    </button>
+    
+    <p class="info" id="info-text">
+      När en länk är aktiv visas den här.<br>
+      Den går ut på ~25 sekunder så var beredd!
+    </p>
+    
+    <div class="instructions hidden" id="instructions">
+      <strong>Så här loggar du in:</strong>
+      <ol>
+        <li>Tryck på "Öppna BankID"-knappen ovan</li>
+        <li>BankID-appen öppnas automatiskt</li>
+        <li>Godkänn med ditt lösenord/ansikte</li>
+        <li>Vänta på bekräftelse i Telegram</li>
+      </ol>
+    </div>
+    
+    <button class="refresh-btn" onclick="loadLink()">↻ Ladda om</button>
+  </div>
+  
+  <div class="card" style="padding: 1rem;">
+    <p class="info" style="font-size: 0.75rem;">
+      📱 <strong>Tips:</strong> Spara denna sida på hemskärmen för snabb åtkomst.<br>
+      💬 <strong>Telegram:</strong> Notifieringar skickas till <em>Mc tider</em>
+    </p>
+  </div>
+</div>
+
+<script>
+  let countdownInterval = null;
+  const LINK_VALIDITY_SECONDS = 25;
+  
+  async function loadLink() {
+    try {
+      const res = await fetch('./bankid-link.json?t=' + Date.now());
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      
+      if (!data.url || !data.createdAt) {
+        showNoLink();
+        return;
+      }
+      
+      const created = new Date(data.createdAt).getTime();
+      const now = Date.now();
+      const elapsed = Math.floor((now - created) / 1000);
+      const remaining = LINK_VALIDITY_SECONDS - elapsed;
+      
+      if (remaining <= 0) {
+        showExpired(data.url);
+      } else {
+        showActive(data.url, remaining);
+      }
+    } catch (err) {
+      console.error('Failed to load link:', err);
+      showNoLink();
+    }
+  }
+  
+  function showActive(url, remaining) {
+    const link = document.getElementById('bankid-link');
+    const badge = document.getElementById('status-badge');
+    const statusText = document.getElementById('status-text');
+    const timer = document.getElementById('timer-display');
+    const info = document.getElementById('info-text');
+    const instructions = document.getElementById('instructions');
+    const requestBtn = document.getElementById('request-btn');
+    
+    link.href = url;
+    link.classList.remove('hidden');
+    requestBtn.classList.add('hidden');
+    
+    badge.className = 'status-badge ready';
+    statusText.textContent = 'Länk aktiv!';
+    timer.classList.remove('hidden', 'expired');
+    instructions.classList.remove('hidden');
+    info.classList.add('hidden');
+    
+    startCountdown(remaining);
+  }
+  
+  function showExpired(url) {
+    const link = document.getElementById('bankid-link');
+    const badge = document.getElementById('status-badge');
+    const statusText = document.getElementById('status-text');
+    const timer = document.getElementById('timer-display');
+    const info = document.getElementById('info-text');
+    const instructions = document.getElementById('instructions');
+    const requestBtn = document.getElementById('request-btn');
+    
+    link.href = url;
+    link.classList.add('hidden');
+    requestBtn.classList.remove('hidden');
+    
+    badge.className = 'status-badge expired';
+    statusText.textContent = 'Länken har gått ut';
+    timer.textContent = '00:00';
+    timer.classList.remove('hidden');
+    timer.classList.add('expired');
+    instructions.classList.add('hidden');
+    info.classList.remove('hidden');
+    info.innerHTML = 'Länken gick ut.<br>Begär en ny via Telegram eller tryck knappen nedan.';
+    
+    clearInterval(countdownInterval);
+  }
+  
+  function showNoLink() {
+    const badge = document.getElementById('status-badge');
+    const statusText = document.getElementById('status-text');
+    const timer = document.getElementById('timer-display');
+    const link = document.getElementById('bankid-link');
+    const requestBtn = document.getElementById('request-btn');
+    const info = document.getElementById('info-text');
+    const instructions = document.getElementById('instructions');
+    
+    badge.className = 'status-badge waiting';
+    statusText.textContent = 'Ingen aktiv länk';
+    timer.classList.add('hidden');
+    link.classList.add('hidden');
+    requestBtn.classList.remove('hidden');
+    instructions.classList.add('hidden');
+    info.classList.remove('hidden');
+    info.innerHTML = 'Ingen BankID-länk är aktiv just nu.<br>Begär en ny via Telegram (Mc tider) eller knappen nedan.';
+    
+    clearInterval(countdownInterval);
+  }
+  
+  function startCountdown(seconds) {
+    clearInterval(countdownInterval);
+    const timer = document.getElementById('timer-display');
+    let remaining = seconds;
+    
+    function update() {
+      const mins = Math.floor(remaining / 60).toString().padStart(2, '0');
+      const secs = (remaining % 60).toString().padStart(2, '0');
+      timer.textContent = `${mins}:${secs}`;
+      
+      if (remaining <= 5) {
+        timer.style.color = '#ef4444';
+      }
+      
+      remaining--;
+      if (remaining < 0) {
+        clearInterval(countdownInterval);
+        loadLink(); // Recheck
+      }
+    }
+    
+    update();
+    countdownInterval = setInterval(update, 1000);
+  }
+  
+  function requestLink() {
+    const btn = document.getElementById('request-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Begäran skickad...';
+    
+    // In a real setup, this would trigger the monitor to generate a new link
+    // For now, instruct user to use Telegram
+    setTimeout(() => {
+      alert('Skriv "bankid" i Telegram-gruppen "Mc tider" för att begära en ny länk.');
+      btn.disabled = false;
+      btn.textContent = '🔔 Begär ny inloggningslänk';
+    }, 1000);
+  }
+  
+  // Auto-refresh every 10 seconds
+  loadLink();
+  setInterval(loadLink, 10000);
+</script>
+</body>
+</html>

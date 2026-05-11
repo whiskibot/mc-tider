@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MC Slot Monitor — Status</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    line-height: 1.6;
+    padding: 2rem 1rem;
+  }
+  .container { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #f8fafc; }
+  .subtitle { color: #94a3b8; font-size: 0.875rem; margin-bottom: 2rem; }
+  .card {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid #334155;
+  }
+  .card h2 { font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.75rem; }
+  .status { display: flex; align-items: center; gap: 0.5rem; font-size: 1.125rem; font-weight: 600; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .status-dot.ok { background: #22c55e; box-shadow: 0 0 8px #22c55e40; }
+  .status-dot.warn { background: #f59e0b; box-shadow: 0 0 8px #f59e0b40; }
+  .status-dot.error { background: #ef4444; box-shadow: 0 0 8px #ef444440; }
+  .status-dot.idle { background: #64748b; }
+  .detail { margin-top: 0.5rem; font-size: 0.875rem; color: #cbd5e1; }
+  .detail code { background: #0f172a; padding: 0.125rem 0.375rem; border-radius: 4px; font-size: 0.8125rem; }
+  .locations { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .location {
+    background: #0f172a;
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    border: 1px solid #334155;
+  }
+  .location.prio-1 { border-color: #22c55e; }
+  .location.prio-2 { border-color: #3b82f6; }
+  .location.prio-3 { border-color: #a855f7; }
+  .log {
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #0f172a;
+    padding: 0.75rem;
+    border-radius: 6px;
+    margin-top: 0.5rem;
+  }
+  .refresh {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.25rem;
+    border-radius: 50px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px #3b82f640;
+  }
+  .refresh:hover { background: #2563eb; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛵 MC Slot Monitor</h1>
+  <p class="subtitle">Trafikverket A-körprov — övervakningsstatus</p>
+
+  <div class="card">
+    <h2>Systemstatus</h2>
+    <div class="status">
+      <span class="status-dot warn" id="status-dot"></span>
+      <span id="status-text">Laddar...</span>
+    </div>
+    <div class="detail">Senast uppdaterad: <span id="last-updated">—</span></div>
+    <div class="detail">Totalt antal checkar: <span id="total-checks">—</span></div>
+    <div class="detail">Felräknare: <span id="error-count">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Konfiguration</h2>
+    <div class="detail">Provtyp: <code>A körprov</code></div>
+    <div class="detail">Datum: <code id="date-window">2026-06-15 → 2026-07-31</code></div>
+    <div class="detail">Notifiering: <code>Telegram (Mc tider)</code></div>
+    <div class="detail">Poll-intervall: <code>5 minuter</code></div>
+    <div class="detail" style="margin-top:0.75rem">Prioriterade orter:</div>
+    <div class="locations" id="locations">
+      <span class="location prio-1">1. Mjölby</span>
+      <span class="location prio-2">2. Linköping</span>
+      <span class="location prio-3">3. Örebro</span>
+      <span class="location">4. Norrköping</span>
+      <span class="location">5. Jönköping</span>
+    </div>
+  </div>
+
+  <div class="card" id="match-card">
+    <h2>Senaste match</h2>
+    <div class="detail">Datum: <span id="last-match-date">—</span></div>
+    <div class="detail">Tid: <span id="last-match-time">—</span></div>
+    <div class="detail">Plats: <span id="last-match-loc">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Session</h2>
+    <div class="detail">BankID: <span id="bankid-status">Ej inloggad</span></div>
+    <div class="detail">Senaste check: <span id="last-check">—</span></div>
+    <div class="detail">Uppstartad: <span id="started-at">—</span></div>
+  </div>
+</div>
+
+<button class="refresh" onclick="loadStatus()">↻ Uppdatera</button>
+
+<script>
+  const STATUS_MAP = {
+    'starting': { text: 'Startar...', cls: 'warn' },
+    'idle': { text: 'Aktiv (väntar)', cls: 'idle' },
+    'checking': { text: 'Kontrollerar...', cls: 'ok' },
+    'error': { text: 'Fel', cls: 'error' },
+    'blocked': { text: 'IP-blockerad', cls: 'error' },
+  };
+
+  async function loadStatus() {
+    try {
+      const res = await fetch('./status.json?t=' + Date.now());
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      
+      const s = STATUS_MAP[data.status] || { text: data.status, cls: 'warn' };
+      const dot = document.getElementById('status-dot');
+      dot.className = 'status-dot ' + s.cls;
+      document.getElementById('status-text').textContent = s.text;
+      
+      document.getElementById('last-updated').textContent = data.updatedAt 
+        ? new Date(data.updatedAt).toLocaleString('sv-SE') : '—';
+      document.getElementById('total-checks').textContent = data.totalChecks ?? '—';
+      document.getElementById('error-count').textContent = data.errorCount ?? '—';
+      document.getElementById('last-check').textContent = data.lastCheck 
+        ? new Date(data.lastCheck).toLocaleString('sv-SE') : '—';
+      document.getElementById('started-at').textContent = data.startedAt 
+        ? new Date(data.startedAt).toLocaleString('sv-SE') : '—';
+      document.getElementById('bankid-status').textContent = data.sessionActive ? 'Inloggad ✅' : 'Ej inloggad';
+      
+      if (data.lastMatch) {
+        document.getElementById('last-match-date').textContent = data.lastMatch.date || '—';
+        document.getElementById('last-match-time').textContent = data.lastMatch.time || '—';
+        document.getElementById('last-match-loc').textContent = data.lastMatch.location || '—';
+        document.getElementById('match-card').classList.remove('hidden');
+      } else {
+        document.getElementById('match-card').classList.add('hidden');
+      }
+      
+      if (data.dateWindow) {
+        document.getElementById('date-window').textContent = 
+          `${data.dateWindow.start} → ${data.dateWindow.end}`;
+      }
+      
+    } catch (err) {
+      console.error('Failed to load status:', err);
+      document.getElementById('status-text').textContent = 'Kunde inte ladda status';
+      document.getElementById('status-dot').className = 'status-dot error';
+    }
+  }
+
+  loadStatus();
+  setInterval(loadStatus, 30000); // Auto-refresh every 30s
+</script>
+</body>
+</html>
